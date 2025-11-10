@@ -1,25 +1,25 @@
 # Base image: includes Ollama preinstalled
 FROM ollama/ollama:latest
 
-# Install Python + dependencies
+# Install Python + pip
 RUN apt update && apt install -y python3 python3-pip git
 
 # Set working directory
 WORKDIR /app
 
-# Copy your app into the container
+# Copy project files
 COPY . /app
 
-# Install Python packages
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies (override PEP 668 restriction)
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Expose ports
+# Pull your local model (optional, can skip for faster build)
+RUN ollama pull llama3.2
+
+# Expose Streamlit and Ollama ports
 EXPOSE 8501
 EXPOSE 11434
 
-# Pull your Ollama model at build time (optional)
-RUN ollama pull llama3.2
-
-# Start both Ollama and Streamlit
+# Start Ollama (background) + Streamlit (foreground)
 CMD ollama serve & \
     streamlit run app3.py --server.port 8501 --server.address 0.0.0.0
