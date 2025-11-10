@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: weather-chatbot
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: OPENWEATHER_API_KEY
+        sync: false
