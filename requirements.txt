@@ -3,7 +3,6 @@ requests==2.32.3
 pydantic==2.11.0
 langchain
 langchain-core
-langchain-ollama
 langgraph
 python-dotenv==1.0.1
 
