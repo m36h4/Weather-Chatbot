@@ -17,6 +17,8 @@ from langgraph.graph import StateGraph, START, END
 
 load_dotenv()
 
+os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+os.environ["OPENWEATHER_API_KEY"] = st.secrets["OPENWEATHER_API_KEY"]
 # --------------------- Logging Setup ---------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -28,7 +30,7 @@ logger = logging.getLogger("WeatherBot")
 
 # --------------------- Weather API ---------------------
 def get_weather(city: str) -> str:
-    api_key = os.getenv("OPENWEATHER_API_KEY")
+    api_key = os.environ["OPENWEATHER_API_KEY"] 
     url = "https://api.openweathermap.org/data/2.5/weather"
     params = {"q": city, "appid": api_key, "units": "metric"}
     res = requests.get(url, params=params).json()
@@ -51,7 +53,7 @@ def get_weather(city: str) -> str:
 llm = ChatOpenAI(
     model="gpt-4o-mini",            # small & fast model suitable for weather bot
     temperature=0.25,
-    api_key=os.getenv("OPENAI_API_KEY")
+    api_key=os.environ["OPENAI_API_KEY"]
 )
 
 
