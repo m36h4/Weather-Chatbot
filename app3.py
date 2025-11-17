@@ -181,7 +181,13 @@ for msg in st.session_state.chat_history:
 if user_input := st.chat_input("Ask about the weather..."):
     st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-    state = st.session_state.state
+    raw_state = st.session_state.state
+    if isinstance(raw_state, dict):
+        state = AgentState(**raw_state)
+    else:
+        state = raw_state
+    if not hasattr(state, "messages") or state.messages is None:
+        state.messages = []
     state.messages.append(user_input)
 
     result = app.invoke(state)
