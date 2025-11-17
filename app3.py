@@ -6,12 +6,17 @@ from datetime import datetime
 import streamlit as st
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from langchain_ollama import ChatOllama
+
+# --- CHANGE HERE ---
+from langchain_openai import ChatOpenAI
+# --------------------
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from langgraph.graph import StateGraph, START, END
 
 load_dotenv()
+
 # --------------------- Logging Setup ---------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -42,15 +47,24 @@ def get_weather(city: str) -> str:
     )
 
 
-# --------------------- LLM + Parser ---------------------
-llm = ChatOllama(model="llama3.2", temperature=0.25)
+# --------------------- LLM (OpenAI) ---------------------
+llm = ChatOpenAI(
+    model="gpt-4o-mini",            # small & fast model suitable for weather bot
+    temperature=0.25,
+    api_key=os.getenv("OPENAI_API_KEY")
+)
 
+
+# --------------------- Pydantic Parser ---------------------
 class Intent(BaseModel):
     intent: str = Field(description="Either 'FETCH' or 'NOT_WEATHER'.")
-    cities: Optional[List[str]] = Field(default_factory=list, description="List of city names if mentioned.")
+    cities: Optional[List[str]] = Field(default_factory=list)
+
 
 parser = PydanticOutputParser(pydantic_object=Intent)
 
+
+# --------------------- Prompts ---------------------
 intent_prompt = ChatPromptTemplate.from_template(
     """You are a focused weather assistant.
 Conversation so far:
@@ -59,20 +73,19 @@ Conversation so far:
 User just said:
 {user_input}
 
-Respond ONLY as a JSON object (no text or explanation) that matches this format:
+Respond ONLY as a JSON object that matches:
 {format_instructions}
 
 Rules:
-- If the message is about weather, temperature, rain, cold, hot, or humidity and mentions one or more cities,
-  set "intent": "FETCH" and include all cities in the "cities" list.
-- If unrelated to weather, set "intent": "NOT_WEATHER" and "cities": [].
-Do not include 'properties' or 'type' fields — just return the plain JSON object."""
+- If message is about weather and contains city names → intent: 'FETCH'
+- Otherwise → intent: 'NOT_WEATHER'
+"""
 )
 
 weather_prompt = ChatPromptTemplate.from_template(
     """You are a weather assistant. Based on this data:
 {weather_data}
-Answer the user's latest question naturally and conversationally."""
+Answer naturally and conversationally."""
 )
 
 intent_chain = intent_prompt | llm | parser
@@ -98,61 +111,56 @@ def detect_intent_node(state: AgentState) -> AgentState:
             "format_instructions": parser.get_format_instructions()
         })
         state.intent = result.dict()
-        logger.info(f"Intent detected: {state.intent}")
     except Exception as e:
         logger.exception(f"Intent parsing failed: {e}")
         state.intent = {"intent": "NOT_WEATHER", "cities": []}
 
-    elapsed = (datetime.now() - start_time).total_seconds()
-    logger.info(f"detect_intent_node completed in {elapsed:.2f}s")
+    logger.info(f"detect_intent_node completed in {(datetime.now() - start_time).total_seconds():.2f}s")
     return state
 
 
 def handle_fetch_node(state: AgentState) -> AgentState:
     logger.info("Entering handle_fetch_node")
-    intent_data = state.intent or {}
-    cities = intent_data.get("cities", [])
+    cities = state.intent.get("cities", [])
     start_time = datetime.now()
 
     if not cities:
         response = "Please specify a city name."
-        logger.warning("No city found in intent.")
     else:
-        combined_weather = "\n\n".join(get_weather(city) for city in cities)
-        response = weather_chain.invoke({"weather_data": combined_weather}).content
-        logger.info(f"Fetched weather for cities: {cities}")
+        weather_data = "\n\n".join(get_weather(c) for c in cities)
+        response = weather_chain.invoke({"weather_data": weather_data}).content
 
     st.session_state.chat_history.append({"role": "assistant", "content": response})
-    elapsed = (datetime.now() - start_time).total_seconds()
-    logger.info(f"handle_fetch_node completed in {elapsed:.2f}s")
+    logger.info(f"handle_fetch_node completed in {(datetime.now() - start_time).total_seconds():.2f}s")
     return state
 
 
 def handle_not_weather_node(state: AgentState) -> AgentState:
-    logger.info("Entering handle_not_weather_node")
-    response = "I'm designed to answer weather-related queries. Please ask about a city or temperature."
+    response = "I'm designed to answer weather questions. Please ask about a city or temperature."
     st.session_state.chat_history.append({"role": "assistant", "content": response})
-    logger.info("Non-weather query handled.")
     return state
 
 
-# --------------------- Build LangGraph ---------------------
+# --------------------- Build Graph ---------------------
 graph = StateGraph(AgentState)
 graph.add_node("detect_intent", detect_intent_node)
 graph.add_node("handle_fetch", handle_fetch_node)
 graph.add_node("handle_not_weather", handle_not_weather_node)
 
 graph.add_edge(START, "detect_intent")
+
 graph.add_conditional_edges(
     "detect_intent",
-    lambda state: state.intent.get("intent") if state.intent else "NOT_WEATHER",
+    lambda s: s.intent.get("intent", "NOT_WEATHER"),
     {
         "FETCH": "handle_fetch",
-        "NOT_WEATHER": "handle_not_weather",
-    },
+        "NOT_WEATHER": "handle_not_weather"
+    }
 )
+
 graph.add_edge("handle_fetch", END)
 graph.add_edge("handle_not_weather", END)
+
 app = graph.compile()
 
 
@@ -166,31 +174,15 @@ if "state" not in st.session_state:
     st.session_state.state = AgentState(messages=[])
 
 for msg in st.session_state.chat_history:
-    if msg["role"] == "user":
-        st.chat_message("user").write(msg["content"])
-    else:
-        st.chat_message("assistant").write(msg["content"])
+    st.chat_message(msg["role"]).write(msg["content"])
 
 if user_input := st.chat_input("Ask about the weather..."):
-    t0 = datetime.now()
-    logger.info(f"User input received: {user_input}")
-
     st.session_state.chat_history.append({"role": "user", "content": user_input})
-    if isinstance(st.session_state.state, dict):
-    	state = AgentState(**st.session_state.state)
-    else:
-    	state = st.session_state.state
 
+    state = st.session_state.state
     state.messages.append(user_input)
 
     result = app.invoke(state)
-    if isinstance(result, dict):
-        result = AgentState(**result)
     st.session_state.state = result
 
-    total_time = (datetime.now() - t0).total_seconds()
-    logger.info(f"Cycle completed in {total_time:.2f}s")
-    logger.info("-" * 60)
-
     st.rerun()
-
